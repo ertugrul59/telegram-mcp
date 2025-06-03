@@ -6,6 +6,7 @@ import asyncio
 import sqlite3
 import logging
 import mimetypes
+import argparse
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Union, Any
 
@@ -43,6 +44,67 @@ def json_serializer(obj):
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 
+# Add optional file logging without changing existing behavior
+def setup_logging():
+    """Add file logging if --log-dir argument is provided, without affecting existing logging."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--log-dir', type=str, help='Directory for additional log files')
+    parser.add_argument('--log-level', type=str, default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                       help='Logging level')
+    
+    # Parse known args to avoid conflicts with other arguments
+    known_args, _ = parser.parse_known_args()
+    
+    # Set up console handler (stderr to avoid MCP protocol interference)
+    console_handler = logging.StreamHandler(sys.stderr)
+    console_formatter = logging.Formatter(
+        '[%(asctime)s] [%(levelname)s] %(name)s - %(message)s'
+    )
+    console_handler.setFormatter(console_formatter)
+    console_handler.setLevel(logging.ERROR)  # Console shows only errors by default
+    
+    # Get the module logger - use consistent name
+    logger = logging.getLogger(__name__)
+    
+    # Clear any existing handlers to avoid duplication
+    logger.handlers.clear()
+    logger.addHandler(console_handler)
+    
+    # Determine the effective logging level
+    if known_args.log_dir:
+        # When file logging is enabled, use the specified level
+        log_level = getattr(logging, known_args.log_level)
+        logger.setLevel(log_level)
+        
+        # Create log directory if it doesn't exist
+        os.makedirs(known_args.log_dir, exist_ok=True)
+        
+        # Set up file handler with timestamp
+        log_file = os.path.join(known_args.log_dir, 'telegram_mcp_server.log')
+        
+        # Configure file logging
+        file_handler = logging.FileHandler(log_file)
+        file_formatter = logging.Formatter(
+            '[%(asctime)s] [%(levelname)s] %(name)s - %(message)s'
+        )
+        file_handler.setFormatter(file_formatter)
+        file_handler.setLevel(log_level)
+        
+        # Add file handler to the module logger
+        logger.addHandler(file_handler)
+        
+        # Use logger instead of print to avoid MCP stdio interference
+        logger.info(f"Logging to file: {log_file} at level {known_args.log_level}")
+        logger.debug(f"Logger effective level: {logging.getLevelName(logger.level)}")
+    else:
+        # When no file logging, use ERROR level as before
+        logger.setLevel(logging.ERROR)
+    
+    return logger
+
+# Call logging setup and get the logger
+logger = setup_logging()
+
 load_dotenv()
 
 TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID"))
@@ -60,40 +122,6 @@ if SESSION_STRING:
 else:
     # Use file-based session
     client = TelegramClient(TELEGRAM_SESSION_NAME, TELEGRAM_API_ID, TELEGRAM_API_HASH)
-
-# Setup robust logging with both file and console output
-logger = logging.getLogger("telegram_mcp")
-logger.setLevel(logging.ERROR)  # Set to ERROR for production, INFO for debugging
-
-# Create console handler
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.ERROR)  # Set to ERROR for production, INFO for debugging
-
-# Create file handler with absolute path
-script_dir = os.path.dirname(os.path.abspath(__file__))
-log_file_path = os.path.join(script_dir, "mcp_errors.log")
-
-try:
-    file_handler = logging.FileHandler(log_file_path, mode="a")  # Append mode
-    file_handler.setLevel(logging.ERROR)
-
-    # Create formatter and add to handlers
-    formatter = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(name)s - %(message)s - %(filename)s:%(lineno)d"
-    )
-    console_handler.setFormatter(formatter)
-    file_handler.setFormatter(formatter)
-
-    # Add handlers to logger
-    logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
-
-    logger.info(f"Logging initialized to {log_file_path}")
-except Exception as log_error:
-    print(f"WARNING: Error setting up log file: {log_error}")
-    # Fallback to console-only logging
-    logger.addHandler(console_handler)
-    logger.error(f"Failed to set up log file handler: {log_error}")
 
 # Error code prefix mapping for better error tracing
 ERROR_PREFIXES = {
@@ -142,7 +170,7 @@ def log_and_format_error(
     logger.exception(f"{function_name} failed ({context}): {error}")
 
     # Return a user-friendly message
-    return f"An error occurred (code: {error_code}). Check mcp_errors.log for details."
+    return f"An error occurred (code: {error_code}). Check telegram_mcp_server.log for details."
 
 
 def format_entity(entity) -> Dict[str, Any]:
@@ -2436,25 +2464,29 @@ async def get_pinned_messages(chat_id: int) -> str:
         logger.exception(f"get_pinned_messages failed (chat_id={chat_id})")
         return log_and_format_error("get_pinned_messages", e, chat_id=chat_id)
 
-
 if __name__ == "__main__":
     nest_asyncio.apply()
+
+    # Log startup information
+    logger.info("Starting Telegram MCP Server...")
+    logger.info(f"Session type: {'String session' if SESSION_STRING else 'File-based session'}")
+    logger.info("Telegram MCP Server initialized")
 
     async def main() -> None:
         try:
             # Start the Telethon client non-interactively
-            print("Starting Telegram client...")
+            logger.info("Starting Telegram client...")
             await client.start()
 
-            print("Telegram client started. Running MCP server...")
+            logger.info("Telegram client started successfully")
+            logger.info("Running MCP server...")
             # Use the asynchronous entrypoint instead of mcp.run()
             await mcp.run_stdio_async()
         except Exception as e:
-            print(f"Error starting client: {e}", file=sys.stderr)
+            logger.error(f"Error starting client: {e}")
             if isinstance(e, sqlite3.OperationalError) and "database is locked" in str(e):
-                print(
-                    "Database lock detected. Please ensure no other instances are running.",
-                    file=sys.stderr,
+                logger.error(
+                    "Database lock detected. Please ensure no other instances are running."
                 )
             sys.exit(1)
 
