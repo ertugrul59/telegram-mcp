@@ -113,12 +113,23 @@ SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING")
 
 mcp = FastMCP("telegram")
 
-if SESSION_STRING:
-    # Use the string session if available
-    client = TelegramClient(StringSession(SESSION_STRING), TELEGRAM_API_ID, TELEGRAM_API_HASH)
-else:
-    # Use file-based session
-    client = TelegramClient(TELEGRAM_SESSION_NAME, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+# Global client variable - will be initialized in proper event loop context
+client = None
+
+# Event-loop aware client initialization
+async def initialize_telegram_client():
+    """Initialize the Telegram client in the current event loop context."""
+    global client
+    if client is None:
+        if SESSION_STRING:
+            client = TelegramClient(StringSession(SESSION_STRING), TELEGRAM_API_ID, TELEGRAM_API_HASH)
+        else:
+            client = TelegramClient(TELEGRAM_SESSION_NAME, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+        
+        logger.info("Starting Telegram client...")
+        await client.start()
+        logger.info("Telegram client started successfully")
+    return client
 
 # Error code prefix mapping for better error tracing
 ERROR_PREFIXES = {
@@ -271,6 +282,9 @@ async def send_message(chat_id: int, message: str) -> str:
         message: The message content to send.
     """
     try:
+        # Ensure client is initialized in the current event loop context
+        await initialize_telegram_client()
+        
         entity = await client.get_entity(chat_id)
         await client.send_message(entity, message)
         return "Message sent successfully."
@@ -1099,6 +1113,9 @@ async def send_file(chat_id: int, file_path: str, caption: str = None) -> str:
         caption: Optional caption for the file.
     """
     try:
+        # Ensure client is initialized in the current event loop context
+        await initialize_telegram_client()
+        
         if not os.path.isfile(file_path):
             return f"File not found: {file_path}"
         if not os.access(file_path, os.R_OK):
@@ -2461,26 +2478,16 @@ async def get_pinned_messages(chat_id: int) -> str:
         logger.exception(f"get_pinned_messages failed (chat_id={chat_id})")
         return log_and_format_error("get_pinned_messages", e, chat_id=chat_id)
 
-# Clean, simple client initialization
-async def start_telegram_client():
-    """Initialize the Telegram client."""
-    try:
-        logger.info("Starting Telegram client...")
-        await client.start()
-        logger.info("Telegram client started successfully")
-    except Exception as e:
-        logger.error(f"Error starting client: {e}")
-        if isinstance(e, sqlite3.OperationalError) and "database is locked" in str(e):
-            logger.error("Database lock detected. Please ensure no other instances are running.")
-        raise
-
 # Main initialization - client is ready before any tools are called
 if __name__ == "__main__":
     nest_asyncio.apply()
     
-    # Initialize Telegram client for BOTH transport modes
-    logger.info("Initializing Telegram client...")
-    asyncio.run(start_telegram_client())
+    # Log startup information
+    logger.info("Starting Telegram MCP Server...")
+    logger.info(f"Transport: {args.transport}")
+    logger.info(f"Session type: {'String session' if SESSION_STRING else 'File-based session'}")
+    
+    # NOTE: Client initialization is now deferred to first tool call for proper event loop context
     
     # Start the appropriate transport
     if args.transport == 'stdio':
