@@ -44,66 +44,63 @@ def json_serializer(obj):
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 
-# Add optional file logging without changing existing behavior
-def setup_logging():
-    """Add file logging if --log-dir argument is provided, without affecting existing logging."""
-    parser = argparse.ArgumentParser(add_help=False)
+def parse_arguments():
+    """Parse command line arguments for transport configuration."""
+    parser = argparse.ArgumentParser(description='Telegram MCP Server')
+    parser.add_argument('--transport', type=str, default='stdio', 
+                       choices=['stdio', 'streamable-http'], help='Transport mode')
+    parser.add_argument('--port', type=int, default=8001, 
+                       help='Port for HTTP transport')
+    parser.add_argument('--host', type=str, default='localhost', 
+                       help='Host for HTTP transport')
     parser.add_argument('--log-dir', type=str, help='Directory for additional log files')
-    parser.add_argument('--log-level', type=str, default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
-                       help='Logging level')
+    parser.add_argument('--log-level', type=str, default='INFO', 
+                       choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], help='Logging level')
     
-    # Parse known args to avoid conflicts with other arguments
-    known_args, _ = parser.parse_known_args()
-    
+    return parser.parse_args()
+
+
+def setup_logging(log_dir=None, log_level='INFO'):
+    """Set up logging with optional file logging."""
     # Set up console handler (stderr to avoid MCP protocol interference)
     console_handler = logging.StreamHandler(sys.stderr)
-    console_formatter = logging.Formatter(
-        '[%(asctime)s] [%(levelname)s] %(name)s - %(message)s'
-    )
+    console_formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(name)s - %(message)s')
     console_handler.setFormatter(console_formatter)
     console_handler.setLevel(logging.ERROR)  # Console shows only errors by default
     
-    # Get the module logger - use consistent name
+    # Get the module logger
     logger = logging.getLogger(__name__)
-    
-    # Clear any existing handlers to avoid duplication
     logger.handlers.clear()
     logger.addHandler(console_handler)
     
     # Determine the effective logging level
-    if known_args.log_dir:
+    if log_dir:
         # When file logging is enabled, use the specified level
-        log_level = getattr(logging, known_args.log_level)
-        logger.setLevel(log_level)
+        log_level_obj = getattr(logging, log_level)
+        logger.setLevel(log_level_obj)
         
         # Create log directory if it doesn't exist
-        os.makedirs(known_args.log_dir, exist_ok=True)
+        os.makedirs(log_dir, exist_ok=True)
         
-        # Set up file handler with timestamp
-        log_file = os.path.join(known_args.log_dir, 'telegram_mcp_server.log')
-        
-        # Configure file logging
+        # Set up file handler
+        log_file = os.path.join(log_dir, 'telegram_mcp_server.log')
         file_handler = logging.FileHandler(log_file)
-        file_formatter = logging.Formatter(
-            '[%(asctime)s] [%(levelname)s] %(name)s - %(message)s'
-        )
+        file_formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(name)s - %(message)s')
         file_handler.setFormatter(file_formatter)
-        file_handler.setLevel(log_level)
-        
-        # Add file handler to the module logger
+        file_handler.setLevel(log_level_obj)
         logger.addHandler(file_handler)
         
-        # Use logger instead of print to avoid MCP stdio interference
-        logger.info(f"Logging to file: {log_file} at level {known_args.log_level}")
-        logger.debug(f"Logger effective level: {logging.getLevelName(logger.level)}")
+        logger.info(f"Logging to file: {log_file} at level {log_level}")
     else:
         # When no file logging, use ERROR level as before
         logger.setLevel(logging.ERROR)
     
     return logger
 
-# Call logging setup and get the logger
-logger = setup_logging()
+
+# Parse arguments and set up logging
+args = parse_arguments()
+logger = setup_logging(args.log_dir, args.log_level)
 
 load_dotenv()
 
@@ -2464,30 +2461,37 @@ async def get_pinned_messages(chat_id: int) -> str:
         logger.exception(f"get_pinned_messages failed (chat_id={chat_id})")
         return log_and_format_error("get_pinned_messages", e, chat_id=chat_id)
 
+async def start_telegram_client():
+    """Initialize the Telegram client."""
+    try:
+        logger.info("Starting Telegram client...")
+        await client.start()
+        logger.info("Telegram client started successfully")
+    except Exception as e:
+        logger.error(f"Error starting client: {e}")
+        if isinstance(e, sqlite3.OperationalError) and "database is locked" in str(e):
+            logger.error("Database lock detected. Please ensure no other instances are running.")
+        raise
+
 if __name__ == "__main__":
     nest_asyncio.apply()
 
     # Log startup information
     logger.info("Starting Telegram MCP Server...")
+    logger.info(f"Transport: {args.transport}")
     logger.info(f"Session type: {'String session' if SESSION_STRING else 'File-based session'}")
+    if args.transport == 'streamable-http':
+        logger.info(f"HTTP server will run on {args.host}:{args.port}")
     logger.info("Telegram MCP Server initialized")
 
-    async def main() -> None:
-        try:
-            # Start the Telethon client non-interactively
-            logger.info("Starting Telegram client...")
-            await client.start()
-
-            logger.info("Telegram client started successfully")
-            logger.info("Running MCP server...")
-            # Use the asynchronous entrypoint instead of mcp.run()
-            await mcp.run_stdio_async()
-        except Exception as e:
-            logger.error(f"Error starting client: {e}")
-            if isinstance(e, sqlite3.OperationalError) and "database is locked" in str(e):
-                logger.error(
-                    "Database lock detected. Please ensure no other instances are running."
-                )
-            sys.exit(1)
-
-    asyncio.run(main())
+    # Initialize Telegram client first
+    asyncio.run(start_telegram_client())
+    
+    # Run MCP server
+    if args.transport == 'streamable-http':
+        logger.info(f"Starting Telegram MCP server on {args.host}:{args.port}")
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+        mcp.run(transport='streamable-http')
+    else:
+        mcp.run(transport='stdio')
