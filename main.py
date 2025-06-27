@@ -2461,6 +2461,7 @@ async def get_pinned_messages(chat_id: int) -> str:
         logger.exception(f"get_pinned_messages failed (chat_id={chat_id})")
         return log_and_format_error("get_pinned_messages", e, chat_id=chat_id)
 
+# Clean, simple client initialization
 async def start_telegram_client():
     """Initialize the Telegram client."""
     try:
@@ -2473,25 +2474,19 @@ async def start_telegram_client():
             logger.error("Database lock detected. Please ensure no other instances are running.")
         raise
 
+# Main initialization - client is ready before any tools are called
 if __name__ == "__main__":
     nest_asyncio.apply()
-
-    # Log startup information
-    logger.info("Starting Telegram MCP Server...")
-    logger.info(f"Transport: {args.transport}")
-    logger.info(f"Session type: {'String session' if SESSION_STRING else 'File-based session'}")
-    if args.transport == 'streamable-http':
-        logger.info(f"HTTP server will run on {args.host}:{args.port}")
-    logger.info("Telegram MCP Server initialized")
-
-    # Initialize Telegram client first
+    
+    # Initialize Telegram client for BOTH transport modes
+    logger.info("Initializing Telegram client...")
     asyncio.run(start_telegram_client())
     
-    # Run MCP server
-    if args.transport == 'streamable-http':
+    # Start the appropriate transport
+    if args.transport == 'stdio':
+        mcp.run(transport='stdio')
+    else:
         logger.info(f"Starting Telegram MCP server on {args.host}:{args.port}")
         mcp.settings.host = args.host
         mcp.settings.port = args.port
         mcp.run(transport='streamable-http')
-    else:
-        mcp.run(transport='stdio')
