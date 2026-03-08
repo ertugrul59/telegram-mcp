@@ -2496,4 +2496,9 @@ if __name__ == "__main__":
         logger.info(f"Starting Telegram MCP server on {args.host}:{args.port}")
         mcp.settings.host = args.host
         mcp.settings.port = args.port
+        if args.host == "0.0.0.0":
+            from mcp.server.transport_security import TransportSecuritySettings
+            mcp.settings.transport_security = TransportSecuritySettings(
+                enable_dns_rebinding_protection=False
+            )
         mcp.run(transport='streamable-http')
