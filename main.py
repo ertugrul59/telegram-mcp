@@ -131,6 +131,24 @@ async def initialize_telegram_client():
         logger.info("Telegram client started successfully")
     return client
 
+
+async def ensure_client():
+    """Ensure the Telegram client is initialized. Call at the start of every tool function."""
+    import traceback as _tb
+    _debug_log = "/tmp/telegram_mcp_debug.log"
+    try:
+        with open(_debug_log, "a") as _f:
+            _f.write(f"ensure_client called, client is {client}\n")
+        if client is None:
+            await initialize_telegram_client()
+        with open(_debug_log, "a") as _f:
+            _f.write(f"ensure_client done, client is {client}, connected={client.is_connected() if client else 'N/A'}\n")
+    except Exception as _e:
+        with open(_debug_log, "a") as _f:
+            _f.write(f"ensure_client ERROR: {_e}\n{_tb.format_exc()}\n")
+        raise
+
+
 # Error code prefix mapping for better error tracing
 ERROR_PREFIXES = {
     "chat": "CHAT",
@@ -231,6 +249,7 @@ async def get_chats(page: int = 1, page_size: int = 20) -> str:
         page_size: Number of chats per page.
     """
     try:
+        await ensure_client()
         dialogs = await client.get_dialogs()
         start = (page - 1) * page_size
         end = start + page_size
@@ -245,6 +264,9 @@ async def get_chats(page: int = 1, page_size: int = 20) -> str:
             lines.append(f"Chat ID: {chat_id}, Title: {title}")
         return "\n".join(lines)
     except Exception as e:
+        import traceback as _tb
+        with open("/tmp/telegram_mcp_debug.log", "a") as _f:
+            _f.write(f"get_chats ERROR: {type(e).__name__}: {e}\n{_tb.format_exc()}\n")
         return log_and_format_error("get_chats", e)
 
 
@@ -258,6 +280,7 @@ async def get_messages(chat_id: int, page: int = 1, page_size: int = 20) -> str:
         page_size: Number of messages per page.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
         offset = (page - 1) * page_size
         messages = await client.get_messages(entity, limit=page_size, add_offset=offset)
@@ -282,9 +305,7 @@ async def send_message(chat_id: int, message: str) -> str:
         message: The message content to send.
     """
     try:
-        # Ensure client is initialized in the current event loop context
-        await initialize_telegram_client()
-        
+        await ensure_client()
         entity = await client.get_entity(chat_id)
         await client.send_message(entity, message)
         return "Message sent successfully."
@@ -298,6 +319,7 @@ async def list_contacts() -> str:
     List all contacts in your Telegram account.
     """
     try:
+        await ensure_client()
         result = await client(functions.contacts.GetContactsRequest(hash=0))
         users = result.users
         if not users:
@@ -326,6 +348,7 @@ async def search_contacts(query: str) -> str:
         query: The search term to look for in contact names, usernames, or phone numbers.
     """
     try:
+        await ensure_client()
         result = await client(functions.contacts.SearchRequest(q=query, limit=50))
         users = result.users
         if not users:
@@ -352,6 +375,7 @@ async def get_contact_ids() -> str:
     Get all contact IDs in your Telegram account.
     """
     try:
+        await ensure_client()
         result = await client(functions.contacts.GetContactIDsRequest(hash=0))
         if not result:
             return "No contact IDs found."
@@ -379,6 +403,7 @@ async def list_messages(
         to_date: Filter messages until this date (format: YYYY-MM-DD).
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
 
         # Parse date filters if provided
@@ -465,6 +490,7 @@ async def list_chats(chat_type: str = None, limit: int = 20) -> str:
         limit: Maximum number of chats to retrieve.
     """
     try:
+        await ensure_client()
         dialogs = await client.get_dialogs(limit=limit)
 
         results = []
@@ -525,6 +551,7 @@ async def get_chat(chat_id: int) -> str:
         chat_id: The ID of the chat.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
 
         result = []
@@ -605,6 +632,7 @@ async def get_direct_chat_by_contact(contact_query: str) -> str:
         contact_query: Name, username, or phone number to search for.
     """
     try:
+        await ensure_client()
         # Fetch all contacts using the correct Telethon method
         result = await client(functions.contacts.GetContactsRequest(hash=0))
         contacts = result.users
@@ -660,6 +688,7 @@ async def get_contact_chats(contact_id: int) -> str:
         contact_id: The ID of the contact.
     """
     try:
+        await ensure_client()
         # Get contact info
         contact = await client.get_entity(contact_id)
         if not isinstance(contact, User):
@@ -712,6 +741,7 @@ async def get_last_interaction(contact_id: int) -> str:
         contact_id: The ID of the contact.
     """
     try:
+        await ensure_client()
         # Get contact info
         contact = await client.get_entity(contact_id)
         if not isinstance(contact, User):
@@ -750,6 +780,7 @@ async def get_message_context(chat_id: int, message_id: int, context_size: int =
         context_size: Number of messages before and after to include.
     """
     try:
+        await ensure_client()
         chat = await client.get_entity(chat_id)
         # Get messages around the specified message
         messages_before = await client.get_messages(chat, limit=context_size, max_id=message_id)
@@ -799,6 +830,7 @@ async def add_contact(phone: str, first_name: str, last_name: str = "") -> str:
         last_name: The contact's last name (optional).
     """
     try:
+        await ensure_client()
         # Try to import the required types first
         from telethon.tl.types import InputPhoneContact
 
@@ -850,6 +882,7 @@ async def delete_contact(user_id: int) -> str:
         user_id: The Telegram user ID of the contact to delete.
     """
     try:
+        await ensure_client()
         user = await client.get_entity(user_id)
         await client(functions.contacts.DeleteContactsRequest(id=[user]))
         return f"Contact with user ID {user_id} deleted."
@@ -865,6 +898,7 @@ async def block_user(user_id: int) -> str:
         user_id: The Telegram user ID to block.
     """
     try:
+        await ensure_client()
         user = await client.get_entity(user_id)
         await client(functions.contacts.BlockRequest(id=user))
         return f"User {user_id} blocked."
@@ -880,6 +914,7 @@ async def unblock_user(user_id: int) -> str:
         user_id: The Telegram user ID to unblock.
     """
     try:
+        await ensure_client()
         user = await client.get_entity(user_id)
         await client(functions.contacts.UnblockRequest(id=user))
         return f"User {user_id} unblocked."
@@ -893,6 +928,7 @@ async def get_me() -> str:
     Get your own user information.
     """
     try:
+        await ensure_client()
         me = await client.get_me()
         return json.dumps(format_entity(me), indent=2)
     except Exception as e:
@@ -909,6 +945,7 @@ async def create_group(title: str, user_ids: list) -> str:
         user_ids: List of user IDs to add to the group
     """
     try:
+        await ensure_client()
         # Convert user IDs to entities
         users = []
         for user_id in user_ids:
@@ -967,6 +1004,7 @@ async def invite_to_group(group_id: int, user_ids: list) -> str:
         user_ids: List of user IDs to invite.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(group_id)
         users_to_add = []
 
@@ -1015,6 +1053,7 @@ async def leave_chat(chat_id: int) -> str:
         chat_id: The chat ID to leave.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
 
         # Check the entity type carefully
@@ -1093,6 +1132,7 @@ async def get_participants(chat_id: int) -> str:
         chat_id: The group or channel ID.
     """
     try:
+        await ensure_client()
         participants = await client.get_participants(chat_id)
         lines = [
             f"ID: {p.id}, Name: {getattr(p, 'first_name', '')} {getattr(p, 'last_name', '')}"
@@ -1113,9 +1153,7 @@ async def send_file(chat_id: int, file_path: str, caption: str = None) -> str:
         caption: Optional caption for the file.
     """
     try:
-        # Ensure client is initialized in the current event loop context
-        await initialize_telegram_client()
-        
+        await ensure_client()
         if not os.path.isfile(file_path):
             return f"File not found: {file_path}"
         if not os.access(file_path, os.R_OK):
@@ -1139,6 +1177,7 @@ async def download_media(chat_id: int, message_id: int, file_path: str) -> str:
         file_path: Absolute path to save the downloaded file (must be writable).
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
         msg = await client.get_messages(entity, ids=message_id)
         if not msg or not msg.media:
@@ -1163,6 +1202,7 @@ async def update_profile(first_name: str = None, last_name: str = None, about: s
     Update your profile information (name, bio).
     """
     try:
+        await ensure_client()
         await client(
             functions.account.UpdateProfileRequest(
                 first_name=first_name, last_name=last_name, about=about
@@ -1181,6 +1221,7 @@ async def set_profile_photo(file_path: str) -> str:
     Set a new profile photo.
     """
     try:
+        await ensure_client()
         await client(
             functions.photos.UploadProfilePhotoRequest(file=await client.upload_file(file_path))
         )
@@ -1195,6 +1236,7 @@ async def delete_profile_photo() -> str:
     Delete your current profile photo.
     """
     try:
+        await ensure_client()
         photos = await client(
             functions.photos.GetUserPhotosRequest(user_id="me", offset=0, max_id=0, limit=1)
         )
@@ -1212,6 +1254,7 @@ async def get_privacy_settings() -> str:
     Get your privacy settings for last seen status.
     """
     try:
+        await ensure_client()
         # Import needed types directly
         from telethon.tl.types import InputPrivacyKeyStatusTimestamp
 
@@ -1243,6 +1286,7 @@ async def set_privacy_settings(
         disallow_users: List of user IDs to disallow
     """
     try:
+        await ensure_client()
         # Import needed types
         from telethon.tl.types import (
             InputPrivacyKeyStatusTimestamp,
@@ -1330,6 +1374,7 @@ async def import_contacts(contacts: list) -> str:
     Import a list of contacts. Each contact should be a dict with phone, first_name, last_name.
     """
     try:
+        await ensure_client()
         input_contacts = [
             functions.contacts.InputPhoneContact(
                 client_id=i,
@@ -1351,6 +1396,7 @@ async def export_contacts() -> str:
     Export all contacts as a JSON string.
     """
     try:
+        await ensure_client()
         result = await client(functions.contacts.GetContactsRequest(hash=0))
         users = result.users
         return json.dumps([format_entity(u) for u in users], indent=2)
@@ -1364,6 +1410,7 @@ async def get_blocked_users() -> str:
     Get a list of blocked users.
     """
     try:
+        await ensure_client()
         result = await client(functions.contacts.GetBlockedRequest(offset=0, limit=100))
         return json.dumps([format_entity(u) for u in result.users], indent=2)
     except Exception as e:
@@ -1376,6 +1423,7 @@ async def create_channel(title: str, about: str = "", megagroup: bool = False) -
     Create a new channel or supergroup.
     """
     try:
+        await ensure_client()
         result = await client(
             functions.channels.CreateChannelRequest(title=title, about=about, megagroup=megagroup)
         )
@@ -1392,6 +1440,7 @@ async def edit_chat_title(chat_id: int, title: str) -> str:
     Edit the title of a chat, group, or channel.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
         if isinstance(entity, Channel):
             await client(functions.channels.EditTitleRequest(channel=entity, title=title))
@@ -1411,6 +1460,7 @@ async def edit_chat_photo(chat_id: int, file_path: str) -> str:
     Edit the photo of a chat, group, or channel. Requires a file path to an image.
     """
     try:
+        await ensure_client()
         if not os.path.isfile(file_path):
             return f"Photo file not found: {file_path}"
         if not os.access(file_path, os.R_OK):
@@ -1444,6 +1494,7 @@ async def delete_chat_photo(chat_id: int) -> str:
     Delete the photo of a chat, group, or channel.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
         if isinstance(entity, Channel):
             # Use InputChatPhotoEmpty for channels/supergroups
@@ -1477,6 +1528,7 @@ async def promote_admin(group_id: int, user_id: int, rights: dict = None) -> str
         rights: Admin rights to give (optional)
     """
     try:
+        await ensure_client()
         chat = await client.get_entity(group_id)
         user = await client.get_entity(user_id)
 
@@ -1540,6 +1592,7 @@ async def demote_admin(group_id: int, user_id: int) -> str:
         user_id: User ID to demote
     """
     try:
+        await ensure_client()
         chat = await client.get_entity(group_id)
         user = await client.get_entity(user_id)
 
@@ -1588,6 +1641,7 @@ async def ban_user(chat_id: int, user_id: int) -> str:
         user_id: User ID to ban
     """
     try:
+        await ensure_client()
         chat = await client.get_entity(chat_id)
         user = await client.get_entity(user_id)
 
@@ -1634,6 +1688,7 @@ async def unban_user(chat_id: int, user_id: int) -> str:
         user_id: User ID to unban
     """
     try:
+        await ensure_client()
         chat = await client.get_entity(chat_id)
         user = await client.get_entity(user_id)
 
@@ -1676,6 +1731,7 @@ async def get_admins(chat_id: int) -> str:
     Get all admins in a group or channel.
     """
     try:
+        await ensure_client()
         # Fix: Use the correct filter type ChannelParticipantsAdmins
         participants = await client.get_participants(chat_id, filter=ChannelParticipantsAdmins())
         lines = [
@@ -1694,6 +1750,7 @@ async def get_banned_users(chat_id: int) -> str:
     Get all banned users in a group or channel.
     """
     try:
+        await ensure_client()
         # Fix: Use the correct filter type ChannelParticipantsKicked
         participants = await client.get_participants(
             chat_id, filter=ChannelParticipantsKicked(q="")
@@ -1714,6 +1771,7 @@ async def get_invite_link(chat_id: int) -> str:
     Get the invite link for a group or channel.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
 
         # Try using ExportChatInviteRequest first
@@ -1757,6 +1815,7 @@ async def join_chat_by_link(link: str) -> str:
     Join a chat by invite link.
     """
     try:
+        await ensure_client()
         # Extract the hash from the invite link
         if "/" in link:
             hash_part = link.split("/")[-1]
@@ -1817,6 +1876,7 @@ async def export_chat_invite(chat_id: int) -> str:
     Export a chat invite link.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
 
         # Try using ExportChatInviteRequest first
@@ -1850,6 +1910,7 @@ async def import_chat_invite(hash: str) -> str:
     Import a chat invite by hash.
     """
     try:
+        await ensure_client()
         # Remove any prefixes like '+' if present
         if hash.startswith("+"):
             hash = hash[1:]
@@ -1909,6 +1970,7 @@ async def send_voice(chat_id: int, file_path: str) -> str:
         file_path: Absolute path to the OGG/OPUS file.
     """
     try:
+        await ensure_client()
         if not os.path.isfile(file_path):
             return f"File not found: {file_path}"
         if not os.access(file_path, os.R_OK):
@@ -1936,6 +1998,7 @@ async def forward_message(from_chat_id: int, message_id: int, to_chat_id: int) -
     Forward a message from one chat to another.
     """
     try:
+        await ensure_client()
         from_entity = await client.get_entity(from_chat_id)
         to_entity = await client.get_entity(to_chat_id)
         await client.forward_messages(to_entity, message_id, from_entity)
@@ -1956,6 +2019,7 @@ async def edit_message(chat_id: int, message_id: int, new_text: str) -> str:
     Edit a message you sent.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
         await client.edit_message(entity, message_id, new_text)
         return f"Message {message_id} edited."
@@ -1971,6 +2035,7 @@ async def delete_message(chat_id: int, message_id: int) -> str:
     Delete a message by ID.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
         await client.delete_messages(entity, message_id)
         return f"Message {message_id} deleted."
@@ -1984,6 +2049,7 @@ async def pin_message(chat_id: int, message_id: int) -> str:
     Pin a message in a chat.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
         await client.pin_message(entity, message_id)
         return f"Message {message_id} pinned in chat {chat_id}."
@@ -1997,6 +2063,7 @@ async def unpin_message(chat_id: int, message_id: int) -> str:
     Unpin a message in a chat.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
         await client.unpin_message(entity, message_id)
         return f"Message {message_id} unpinned in chat {chat_id}."
@@ -2010,6 +2077,7 @@ async def mark_as_read(chat_id: int) -> str:
     Mark all messages as read in a chat.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
         await client.send_read_acknowledge(entity)
         return f"Marked all messages as read in chat {chat_id}."
@@ -2023,6 +2091,7 @@ async def reply_to_message(chat_id: int, message_id: int, text: str) -> str:
     Reply to a specific message in a chat.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
         await client.send_message(entity, text, reply_to=message_id)
         return f"Replied to message {message_id} in chat {chat_id}."
@@ -2041,6 +2110,7 @@ async def get_media_info(chat_id: int, message_id: int) -> str:
         message_id: The message ID.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
         msg = await client.get_messages(entity, ids=message_id)
         if not msg or not msg.media:
@@ -2056,6 +2126,7 @@ async def search_public_chats(query: str) -> str:
     Search for public chats, channels, or bots by username or title.
     """
     try:
+        await ensure_client()
         result = await client(functions.contacts.SearchRequest(q=query, limit=20))
         return json.dumps([format_entity(u) for u in result.users], indent=2)
     except Exception as e:
@@ -2068,6 +2139,7 @@ async def search_messages(chat_id: int, query: str, limit: int = 20) -> str:
     Search for messages in a chat by text.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
         messages = await client.get_messages(entity, limit=limit, search=query)
         return "\n".join([f"ID: {m.id} | {m.date} | {m.message}" for m in messages])
@@ -2083,6 +2155,7 @@ async def resolve_username(username: str) -> str:
     Resolve a username to a user or chat ID.
     """
     try:
+        await ensure_client()
         result = await client(functions.contacts.ResolveUsernameRequest(username=username))
         return str(result)
     except Exception as e:
@@ -2095,6 +2168,7 @@ async def mute_chat(chat_id: int) -> str:
     Mute notifications for a chat.
     """
     try:
+        await ensure_client()
         from telethon.tl.types import InputPeerNotifySettings
 
         peer = await client.get_entity(chat_id)
@@ -2133,6 +2207,7 @@ async def unmute_chat(chat_id: int) -> str:
     Unmute notifications for a chat.
     """
     try:
+        await ensure_client()
         from telethon.tl.types import InputPeerNotifySettings
 
         peer = await client.get_entity(chat_id)
@@ -2171,6 +2246,7 @@ async def archive_chat(chat_id: int) -> str:
     Archive a chat.
     """
     try:
+        await ensure_client()
         await client(
             functions.messages.ToggleDialogPinRequest(
                 peer=await client.get_entity(chat_id), pinned=True
@@ -2187,6 +2263,7 @@ async def unarchive_chat(chat_id: int) -> str:
     Unarchive a chat.
     """
     try:
+        await ensure_client()
         await client(
             functions.messages.ToggleDialogPinRequest(
                 peer=await client.get_entity(chat_id), pinned=False
@@ -2203,6 +2280,7 @@ async def get_sticker_sets() -> str:
     Get all sticker sets.
     """
     try:
+        await ensure_client()
         result = await client(functions.messages.GetAllStickersRequest(hash=0))
         return json.dumps([s.title for s in result.sets], indent=2)
     except Exception as e:
@@ -2218,6 +2296,7 @@ async def send_sticker(chat_id: int, file_path: str) -> str:
         file_path: Absolute path to the .webp sticker file.
     """
     try:
+        await ensure_client()
         if not os.path.isfile(file_path):
             return f"Sticker file not found: {file_path}"
         if not os.access(file_path, os.R_OK):
@@ -2240,6 +2319,7 @@ async def get_gif_search(query: str, limit: int = 10) -> str:
         limit: Max number of GIFs to return.
     """
     try:
+        await ensure_client()
         # Try approach 1: SearchGifsRequest
         try:
             result = await client(
@@ -2295,6 +2375,7 @@ async def send_gif(chat_id: int, gif_id: int) -> str:
         gif_id: Telegram document ID for the GIF (from get_gif_search).
     """
     try:
+        await ensure_client()
         if not isinstance(gif_id, int):
             return "gif_id must be a Telegram document ID (integer), not a file path. Use get_gif_search to find IDs."
         entity = await client.get_entity(chat_id)
@@ -2310,6 +2391,7 @@ async def get_bot_info(bot_username: str) -> str:
     Get information about a bot by username.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(bot_username)
         if not entity:
             return f"Bot with username {bot_username} not found."
@@ -2353,6 +2435,7 @@ async def set_bot_commands(bot_username: str, commands: list) -> str:
         commands: List of command dictionaries with 'command' and 'description' keys.
     """
     try:
+        await ensure_client()
         # First check if the current client is a bot
         me = await client.get_me()
         if not getattr(me, "bot", False):
@@ -2394,6 +2477,7 @@ async def get_history(chat_id: int, limit: int = 100) -> str:
     Get full chat history (up to limit).
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
         messages = await client.get_messages(entity, limit=limit)
         return "\n".join([f"ID: {m.id} | {m.date} | {m.message}" for m in messages])
@@ -2407,6 +2491,7 @@ async def get_user_photos(user_id: int, limit: int = 10) -> str:
     Get profile photos of a user.
     """
     try:
+        await ensure_client()
         user = await client.get_entity(user_id)
         photos = await client(
             functions.photos.GetUserPhotosRequest(user_id=user, offset=0, max_id=0, limit=limit)
@@ -2422,6 +2507,7 @@ async def get_user_status(user_id: int) -> str:
     Get the online status of a user.
     """
     try:
+        await ensure_client()
         user = await client.get_entity(user_id)
         return str(user.status)
     except Exception as e:
@@ -2434,6 +2520,7 @@ async def get_recent_actions(chat_id: int) -> str:
     Get recent admin actions (admin log) in a group or channel.
     """
     try:
+        await ensure_client()
         result = await client(
             functions.channels.GetAdminLogRequest(
                 channel=chat_id, q="", events_filter=None, admins=[], max_id=0, min_id=0, limit=20
@@ -2456,6 +2543,7 @@ async def get_pinned_messages(chat_id: int) -> str:
     Get all pinned messages in a chat.
     """
     try:
+        await ensure_client()
         entity = await client.get_entity(chat_id)
         # Use correct filter based on Telethon version
         try:
